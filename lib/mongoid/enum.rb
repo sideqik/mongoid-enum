@@ -1,5 +1,6 @@
 require "mongoid/enum/version"
 require "mongoid/enum/validators/multiple_validator"
+require "mongoid/enum/configuration"
 
 module Mongoid
   module Enum
@@ -7,16 +8,16 @@ module Mongoid
     module ClassMethods
 
       def enum(name, values, options = {})
-        field_name = name.to_sym
+        field_name = :"#{Mongoid::Enum.configuration.field_name_prefix}#{name}"
         options = default_options(values).merge(options)
 
         set_values_constant name, values
 
         create_field field_name, options
-        alias_attribute name, field_name
 
         create_validations field_name, values, options
         define_value_scopes_and_accessors field_name, values, options
+        define_field_accessor name, field_name, options
       end
 
       private
@@ -41,9 +42,10 @@ module Mongoid
 
       def create_validations(field_name, values, options)
         if options[:multiple] && options[:validate]
-          validates field_name, :'mongoid/enum/validators/multiple' => { :in => values, :allow_nil => !options[:required] }
+          validates field_name, :'mongoid/enum/validators/multiple' => { :in => values.map(&:to_sym), :allow_nil => !options[:required] }
+        #FIXME: Shouldn't this be `elsif options[:validate]` ???
         elsif validate
-          validates field_name, :inclusion => {:in => values}, :allow_nil => !options[:required]
+          validates field_name, :inclusion => {:in => values.map(&:to_sym)}, :allow_nil => !options[:required]
         end
       end
 
@@ -57,6 +59,24 @@ module Mongoid
             define_string_accessor(field_name, value)
           end
         end
+      end
+
+      def define_field_accessor(name, field_name, options)
+        if options[:multiple]
+          define_array_field_accessor name, field_name
+        else
+          define_string_field_accessor name, field_name
+        end
+      end
+
+      def define_array_field_accessor(name, field_name)
+        class_eval "def #{name}=(vals) self.write_attribute(:#{field_name}, Array(vals).compact.map(&:to_sym)) end"
+        class_eval "def #{name}() self.read_attribute(:#{field_name}) end"
+      end
+
+      def define_string_field_accessor(name, field_name)
+        class_eval "def #{name}=(val) self.write_attribute(:#{field_name}, val && val.to_sym || nil) end"
+        class_eval "def #{name}() self.read_attribute(:#{field_name}) end"
       end
 
       def define_array_accessor(field_name, value)
